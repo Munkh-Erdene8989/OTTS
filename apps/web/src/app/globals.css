@@ -1,0 +1,55 @@
+@import url("https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&display=swap");
+@import "tailwindcss";
+
+:root {
+  --bg: #07070f;
+  --bg-elevated: #12121c;
+  --text: #f0f0f8;
+  --muted: #9aa0b5;
+  --accent: #e23b8c;
+  --accent-2: #a855f7;
+  --line: rgba(255, 255, 255, 0.08);
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-elevated: var(--bg-elevated);
+  --color-ink: var(--text);
+  --color-muted: var(--muted);
+  --color-accent: var(--accent);
+  --color-accent-2: var(--accent-2);
+  --font-sans: "DM Sans", ui-sans-serif, system-ui, sans-serif;
+}
+
+html,
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: "DM Sans", sans-serif;
+  min-height: 100%;
+}
+
+body {
+  background-image:
+    radial-gradient(1200px 600px at 10% -10%, rgba(168, 85, 247, 0.18), transparent 50%),
+    radial-gradient(900px 500px at 110% 10%, rgba(226, 59, 140, 0.12), transparent 45%);
+}
+
+* {
+  -webkit-tap-highlight-color: transparent;
+}
+
+mux-player {
+  --media-object-fit: contain;
+  --controls-backdrop-color: rgb(7 7 15 / 55%);
+  width: 100%;
+  height: 100%;
+  border-radius: 0;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  scrollbar-width: none;
+}

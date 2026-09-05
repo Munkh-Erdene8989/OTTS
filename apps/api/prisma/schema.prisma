@@ -1,0 +1,254 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  ADMIN
+  CUSTOMER
+}
+
+enum UserStatus {
+  ACTIVE
+  DISABLED
+}
+
+enum AccessType {
+  SUBSCRIPTION
+  PPV
+  FREE
+}
+
+enum VideoKind {
+  FEATURE
+  REEL
+  TRAILER
+}
+
+enum MuxStatus {
+  WAITING
+  PREPARING
+  READY
+  ERRORED
+}
+
+enum SubscriptionStatus {
+  INACTIVE
+  ACTIVE
+  PAST_DUE
+  CANCELED
+}
+
+enum PurchaseStatus {
+  PENDING
+  PAID
+  FAILED
+}
+
+enum PaymentKind {
+  SUBSCRIPTION
+  PPV
+}
+
+enum PaymentStatus {
+  PENDING
+  PAID
+  FAILED
+  CANCELED
+}
+
+model User {
+  id        String     @id @default(uuid())
+  phone     String     @unique
+  role      Role       @default(CUSTOMER)
+  status    UserStatus @default(ACTIVE)
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+
+  profiles      Profile[]
+  subscriptions Subscription[]
+  purchases     Purchase[]
+  payments      Payment[]
+  refreshTokens RefreshToken[]
+}
+
+model OtpChallenge {
+  id        String   @id @default(uuid())
+  phone     String
+  codeHash  String
+  expiresAt DateTime
+  attempts  Int      @default(0)
+  consumed  Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([phone, createdAt])
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid())
+  userId    String
+  tokenHash String
+  expiresAt DateTime
+  revoked   Boolean  @default(false)
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model Profile {
+  id        String   @id @default(uuid())
+  userId    String
+  name      String
+  avatarUrl String?
+  isKids    Boolean  @default(false)
+  isDefault Boolean  @default(false)
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  progress  WatchProgress[]
+  watchlist WatchlistItem[]
+}
+
+model Title {
+  id           String     @id @default(uuid())
+  title        String
+  synopsis     String
+  year         Int
+  durationSec  Int        @default(0)
+  ageRating    String     @default("12+")
+  posterUrl    String
+  heroUrl      String
+  matchPercent Int        @default(95)
+  accessType   AccessType @default(SUBSCRIPTION)
+  ppvPriceMnt  Int        @default(0)
+  isPublished  Boolean    @default(true)
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  videos      Video[]
+  genres      TitleGenre[]
+  collections CollectionItem[]
+  purchases   Purchase[]
+  watchlist   WatchlistItem[]
+}
+
+model Video {
+  id            String    @id @default(uuid())
+  titleId       String
+  kind          VideoKind @default(FEATURE)
+  muxAssetId    String?
+  muxPlaybackId String?
+  muxUploadId   String?   @unique
+  muxStatus     MuxStatus @default(WAITING)
+  aspectRatio   String?
+  durationSec   Int       @default(0)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  title         Title     @relation(fields: [titleId], references: [id], onDelete: Cascade)
+  progress      WatchProgress[]
+
+  @@index([titleId])
+}
+
+model Genre {
+  id     String       @id @default(uuid())
+  name   String       @unique
+  slug   String       @unique
+  titles TitleGenre[]
+}
+
+model TitleGenre {
+  titleId String
+  genreId String
+  title   Title @relation(fields: [titleId], references: [id], onDelete: Cascade)
+  genre   Genre @relation(fields: [genreId], references: [id], onDelete: Cascade)
+
+  @@id([titleId, genreId])
+}
+
+model Collection {
+  id        String           @id @default(uuid())
+  slug      String           @unique
+  name      String
+  sortOrder Int              @default(0)
+  items     CollectionItem[]
+}
+
+model CollectionItem {
+  collectionId String
+  titleId      String
+  sortOrder    Int        @default(0)
+  collection   Collection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+  title        Title      @relation(fields: [titleId], references: [id], onDelete: Cascade)
+
+  @@id([collectionId, titleId])
+}
+
+model Subscription {
+  id               String             @id @default(uuid())
+  userId           String
+  status           SubscriptionStatus @default(INACTIVE)
+  planCode         String             @default("premium_monthly")
+  currentPeriodEnd DateTime?
+  qpayInvoiceId    String?
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+  user             User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Purchase {
+  id       String         @id @default(uuid())
+  userId   String
+  titleId  String
+  status   PurchaseStatus @default(PENDING)
+  priceMnt Int
+  createdAt DateTime      @default(now())
+  user     User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title    Title          @relation(fields: [titleId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, titleId])
+}
+
+model Payment {
+  id            String        @id @default(uuid())
+  userId        String
+  kind          PaymentKind
+  status        PaymentStatus @default(PENDING)
+  amountMnt     Int
+  qpayInvoiceId String?       @unique
+  titleId       String?
+  rawPayload    Json?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+  user          User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model WatchProgress {
+  id          String   @id @default(uuid())
+  profileId   String
+  videoId     String
+  positionSec Int      @default(0)
+  durationSec Int      @default(0)
+  completed   Boolean  @default(false)
+  updatedAt   DateTime @updatedAt
+  profile     Profile  @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  video       Video    @relation(fields: [videoId], references: [id], onDelete: Cascade)
+
+  @@unique([profileId, videoId])
+}
+
+model WatchlistItem {
+  id        String   @id @default(uuid())
+  profileId String
+  titleId   String
+  createdAt DateTime @default(now())
+  profile   Profile  @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  title     Title    @relation(fields: [titleId], references: [id], onDelete: Cascade)
+
+  @@unique([profileId, titleId])
+}
