@@ -1,77 +1,29 @@
 import { BadRequestException, Injectable, Logger, NotFoundException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
+import { PrismaService } from "../prisma/prisma.service";
+import { QpayClient } from "./qpay";
+
 const PREMIUM_MONTHLY_PRICE_MNT = 12990;
 const PREMIUM_PLAN_CODE = "premium_monthly";
-import { PrismaService } from "../prisma/prisma.service";
-
-type QpayInvoice = {
-  invoice_id: string;
-  qr_text?: string;
-  qr_image?: string;
-  urls?: { name: string; description: string; link: string }[];
-};
 
 @Injectable()
 export class PaymentsService {
   private readonly logger = new Logger(PaymentsService.name);
-  private qpayToken: { access: string; exp: number } | null = null;
+  private readonly qpay: QpayClient;
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
-  ) {}
+  ) {
+    this.qpay = new QpayClient(config);
+  }
 
   private price() {
     return Number(this.config.get("PREMIUM_MONTHLY_PRICE_MNT") ?? PREMIUM_MONTHLY_PRICE_MNT);
   }
 
-  private configured() {
-    return Boolean(this.config.get("QPAY_USERNAME") && this.config.get("QPAY_PASSWORD"));
-  }
-
-  private async qpayAuth(): Promise<string> {
-    if (this.qpayToken && this.qpayToken.exp > Date.now()) return this.qpayToken.access;
-    const base = this.config.getOrThrow("QPAY_BASE_URL");
-    const user = this.config.getOrThrow("QPAY_USERNAME");
-    const pass = this.config.getOrThrow("QPAY_PASSWORD");
-    const res = await fetch(`${base}/auth/token`, {
-      method: "POST",
-      headers: {
-        Authorization: `Basic ${Buffer.from(`${user}:${pass}`).toString("base64")}`,
-      },
-    });
-    if (!res.ok) throw new Error("QPay auth failed");
-    const data = (await res.json()) as { access_token: string; expires_in: number };
-    this.qpayToken = {
-      access: data.access_token,
-      exp: Date.now() + (data.expires_in - 60) * 1000,
-    };
-    return data.access_token;
-  }
-
-  private async createQpayInvoice(amount: number, senderInvoiceNo: string, callback: string) {
-    const token = await this.qpayAuth();
-    const base = this.config.getOrThrow("QPAY_BASE_URL");
-    const res = await fetch(`${base}/invoice`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        invoice_code: this.config.get("QPAY_INVOICE_CODE"),
-        sender_invoice_no: senderInvoiceNo,
-        invoice_receiver_code: "terminal",
-        invoice_description: "negun",
-        amount,
-        callback_url: callback,
-      }),
-    });
-    if (!res.ok) {
-      this.logger.error(await res.text());
-      throw new BadRequestException("QPay нэхэмжлэх үүсгэж чадсангүй");
-    }
-    return (await res.json()) as QpayInvoice;
+  private brand() {
+    return this.config.get<string>("BRAND_NAME") ?? "negun";
   }
 
   async createSubscription(userId: string) {
@@ -85,34 +37,7 @@ export class PaymentsService {
       data: { userId, kind: "SUBSCRIPTION", amountMnt: amount, status: "PENDING" },
     });
 
-    if (!this.configured()) {
-      return {
-        mock: true,
-        paymentId: payment.id,
-        amountMnt: amount,
-        qrText: `MOCK-SUB-${payment.id}`,
-        simulateUrl: `/v1/payments/simulate/${payment.id}`,
-      };
-    }
-
-    const invoice = await this.createQpayInvoice(
-      amount,
-      payment.id,
-      this.config.get("QPAY_CALLBACK_URL") ?? "",
-    );
-    await this.prisma.payment.update({
-      where: { id: payment.id },
-      data: { qpayInvoiceId: invoice.invoice_id },
-    });
-    return {
-      mock: false,
-      paymentId: payment.id,
-      amountMnt: amount,
-      invoiceId: invoice.invoice_id,
-      qrText: invoice.qr_text,
-      qrImage: invoice.qr_image,
-      urls: invoice.urls,
-    };
+    return this.issueInvoice(payment.id, amount, `${this.brand()} Premium`);
   }
 
   async createPpv(userId: string, titleId: string) {
@@ -127,7 +52,7 @@ export class PaymentsService {
     });
     if (owned) return { alreadyOwned: true };
 
-    const purchase = await this.prisma.purchase.upsert({
+    await this.prisma.purchase.upsert({
       where: { userId_titleId: { userId, titleId } },
       update: { status: "PENDING", priceMnt: title.ppvPriceMnt },
       create: { userId, titleId, status: "PENDING", priceMnt: title.ppvPriceMnt },
@@ -143,38 +68,33 @@ export class PaymentsService {
       },
     });
 
-    if (!this.configured()) {
-      return {
-        mock: true,
-        paymentId: payment.id,
-        purchaseId: purchase.id,
-        amountMnt: title.ppvPriceMnt,
-        qrText: `MOCK-PPV-${payment.id}`,
-        simulateUrl: `/v1/payments/simulate/${payment.id}`,
-      };
+    return this.issueInvoice(payment.id, title.ppvPriceMnt, `${this.brand()} · ${title.title}`);
+  }
+
+  async getStatus(userId: string, role: string, paymentId: string) {
+    const payment = await this.prisma.payment.findUnique({ where: { id: paymentId } });
+    if (!payment) throw new NotFoundException();
+    if (role !== "ADMIN" && payment.userId !== userId) {
+      throw new BadRequestException("Энэ төлбөрийг харах эрхгүй");
     }
 
-    const invoice = await this.createQpayInvoice(
-      title.ppvPriceMnt,
-      payment.id,
-      this.config.get("QPAY_CALLBACK_URL") ?? "",
-    );
-    await this.prisma.payment.update({
-      where: { id: payment.id },
-      data: { qpayInvoiceId: invoice.invoice_id },
-    });
+    if (payment.status === "PENDING" && payment.qpayInvoiceId) {
+      await this.confirmIfPaid(payment.id, payment.qpayInvoiceId, payment.amountMnt);
+    }
+
+    const latest = await this.prisma.payment.findUniqueOrThrow({ where: { id: paymentId } });
     return {
-      mock: false,
-      paymentId: payment.id,
-      amountMnt: title.ppvPriceMnt,
-      invoiceId: invoice.invoice_id,
-      qrText: invoice.qr_text,
-      qrImage: invoice.qr_image,
-      urls: invoice.urls,
+      paymentId: latest.id,
+      status: latest.status,
+      amountMnt: latest.amountMnt,
+      kind: latest.kind,
     };
   }
 
   async simulate(userId: string, role: string, paymentId: string) {
+    if (this.qpay.configured()) {
+      throw new BadRequestException("QPay идэвхтэй үед simulate ашиглах боломжгүй");
+    }
     const payment = await this.prisma.payment.findUnique({ where: { id: paymentId } });
     if (!payment) throw new NotFoundException();
     if (role !== "ADMIN" && payment.userId !== userId) {
@@ -224,7 +144,14 @@ export class PaymentsService {
   }
 
   async handleCallback(body: Record<string, unknown>) {
-    const invoiceId = String(body.invoice_id ?? body.sender_invoice_no ?? "");
+    const invoiceId = String(
+      body.invoice_id ?? body.sender_invoice_no ?? body.payment_id ?? body.qpay_payment_id ?? "",
+    );
+    if (!invoiceId) {
+      this.logger.warn("QPay callback missing invoice id");
+      return { ok: true, ignored: true };
+    }
+
     const payment = await this.prisma.payment.findFirst({
       where: {
         OR: [{ qpayInvoiceId: invoiceId }, { id: invoiceId }],
@@ -234,6 +161,66 @@ export class PaymentsService {
       this.logger.warn(`QPay callback unknown invoice ${invoiceId}`);
       return { ok: true, ignored: true };
     }
-    return this.fulfill(payment.id, body);
+    if (payment.status === "PAID") return { ok: true, already: true };
+
+    const qpayInvoiceId = payment.qpayInvoiceId ?? invoiceId;
+    const confirmed = await this.confirmIfPaid(payment.id, qpayInvoiceId, payment.amountMnt, body);
+    return confirmed ?? { ok: true, pending: true };
+  }
+
+  private async issueInvoice(paymentId: string, amount: number, description: string) {
+    if (!this.qpay.configured()) {
+      return {
+        mock: true,
+        paymentId,
+        amountMnt: amount,
+        qrText: `MOCK-${paymentId}`,
+        simulateUrl: `/v1/payments/simulate/${paymentId}`,
+      };
+    }
+
+    try {
+      const invoice = await this.qpay.createInvoice({
+        amount,
+        senderInvoiceNo: paymentId,
+        description,
+      });
+      await this.prisma.payment.update({
+        where: { id: paymentId },
+        data: { qpayInvoiceId: invoice.invoice_id },
+      });
+      return {
+        mock: false,
+        paymentId,
+        amountMnt: amount,
+        invoiceId: invoice.invoice_id,
+        qrText: invoice.qr_text,
+        qrImage: invoice.qr_image,
+        shortUrl: invoice.qPay_shortUrl ?? invoice.qpay_short_url,
+        urls: invoice.urls,
+      };
+    } catch (err) {
+      this.logger.error(err);
+      throw new BadRequestException("QPay нэхэмжлэх үүсгэж чадсангүй");
+    }
+  }
+
+  private async confirmIfPaid(
+    paymentId: string,
+    invoiceId: string,
+    amountMnt: number,
+    raw?: unknown,
+  ) {
+    try {
+      const check = await this.qpay.checkPayment(invoiceId);
+      const paid =
+        Number(check.count ?? 0) > 0 &&
+        (check.paid_amount == null || Number(check.paid_amount) >= amountMnt);
+      if (!paid) return null;
+      return this.fulfill(paymentId, raw ?? check);
+    } catch (err) {
+      this.logger.error(`QPay payment check failed for ${invoiceId}: ${String(err)}`);
+      return null;
+    }
   }
 }

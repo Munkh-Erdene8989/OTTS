@@ -4,6 +4,13 @@ import Mux from "@mux/mux-node";
 import { MuxStatus, VideoKind } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 
+function decodeMuxPrivateKey(raw: string | undefined) {
+  if (!raw) return undefined;
+  const trimmed = raw.trim();
+  if (trimmed.includes("BEGIN")) return trimmed.replace(/\\n/g, "\n");
+  return Buffer.from(trimmed, "base64").toString("utf8");
+}
+
 @Injectable()
 export class MuxService {
   private readonly logger = new Logger(MuxService.name);
@@ -22,7 +29,9 @@ export class MuxService {
             tokenSecret,
             webhookSecret: this.config.get<string>("MUX_WEBHOOK_SECRET"),
             jwtSigningKey: this.config.get<string>("MUX_SIGNING_KEY_ID"),
-            jwtPrivateKey: this.config.get<string>("MUX_SIGNING_KEY_PRIVATE"),
+            jwtPrivateKey: decodeMuxPrivateKey(
+              this.config.get<string>("MUX_SIGNING_KEY_PRIVATE"),
+            ),
           })
         : null;
     if (!this.client) {

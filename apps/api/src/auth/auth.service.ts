@@ -70,12 +70,11 @@ export class AuthService implements OnModuleInit {
     });
 
     await this.sms.sendOtp(phone, code);
-    const mock = (this.config.get<string>("SMS_PROVIDER") ?? "mock") === "mock";
     return {
       ok: true,
       phone,
       expiresIn: ttl,
-      ...(mock ? { devCode: code } : {}),
+      ...(!this.sms.isLive() ? { devCode: code } : {}),
     };
   }
 
