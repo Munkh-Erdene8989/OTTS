@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "mux": {
+      "command": "npx",
+      "args": ["-y", "@mux/mcp@latest", "--code-execution-mode=local"],
+      "envFile": "apps/api/.env"
+    }
+  }
+}

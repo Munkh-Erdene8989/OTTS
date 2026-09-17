@@ -92,8 +92,9 @@ export default function ProfilePage() {
           </label>
         </div>
         {me.role === "ADMIN" && (
-          <Link href="/admin" className="block rounded-2xl bg-elevated px-4 py-3">
+          <Link href="/admin" className="flex items-center justify-between rounded-2xl bg-elevated px-4 py-3">
             Админ самбар
+            <span className="text-muted">→</span>
           </Link>
         )}
         <button

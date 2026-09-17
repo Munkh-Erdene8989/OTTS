@@ -10,7 +10,7 @@
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:seed": "tsx prisma/seed.ts",
-    "test": "tsx --test src/access/access.service.spec.ts src/sms/sms.service.spec.ts",
+    "test": "tsx --test src/access/access.service.spec.ts src/sms/sms.service.spec.ts src/payments/qpay.spec.ts",
     "lint": "tsc --noEmit"
   },
   "dependencies": {

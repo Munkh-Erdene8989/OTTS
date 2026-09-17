@@ -1,8 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import { AuthProvider } from "@/lib/auth";
-import { Header } from "@/components/Header";
-import { BottomNav } from "@/components/BottomNav";
+import { AppChrome } from "@/components/AppChrome";
 
 export const metadata: Metadata = {
   title: "negun",
@@ -14,11 +13,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="mn">
       <body className="min-h-dvh">
         <AuthProvider>
-          <div className="mx-auto min-h-dvh max-w-lg">
-            <Header />
-            {children}
-            <BottomNav />
-          </div>
+          <AppChrome>{children}</AppChrome>
         </AuthProvider>
       </body>
     </html>

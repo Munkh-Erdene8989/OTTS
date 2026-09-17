@@ -1,17 +1,23 @@
 "use client";
 
-import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { Suspense, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 
-export default function LoginPage() {
+function safeNext(value: string | null) {
+  if (!value || !value.startsWith("/") || value.startsWith("//")) return "/";
+  return value;
+}
+
+function LoginInner() {
   const [phone, setPhone] = useState("");
   const [code, setCode] = useState("");
   const [step, setStep] = useState<"phone" | "otp">("phone");
   const [devCode, setDevCode] = useState<string | null>(null);
   const [error, setError] = useState("");
   const router = useRouter();
+  const params = useSearchParams();
   const { refresh } = useAuth();
 
   const request = async () => {
@@ -36,7 +42,7 @@ export default function LoginPage() {
         body: JSON.stringify({ phone, code }),
       });
       await refresh();
-      router.push("/");
+      router.push(safeNext(params.get("next")));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Алдаа");
     }
@@ -95,16 +101,20 @@ export default function LoginPage() {
             value={code}
             onChange={(e) => setCode(e.target.value)}
           />
-          <button
-            type="submit"
-            onClick={() => void verify()}
-            className="w-full rounded-2xl bg-white py-3 font-semibold text-black"
-          >
+          <button type="submit" className="w-full rounded-2xl bg-white py-3 font-semibold text-black">
             Нэвтрэх
           </button>
         </form>
       )}
       {error && <p className="mt-4 text-sm text-red-400">{error}</p>}
     </main>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense fallback={<p className="p-6 text-muted">Уншиж байна…</p>}>
+      <LoginInner />
+    </Suspense>
   );
 }

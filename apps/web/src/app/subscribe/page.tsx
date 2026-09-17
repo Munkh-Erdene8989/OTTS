@@ -24,6 +24,26 @@ function qrSrc(image: string) {
   return `data:image/png;base64,${image}`;
 }
 
+function BankLogo({ name, logo }: { name: string; logo?: string }) {
+  const [failed, setFailed] = useState(false);
+  const initial = name.slice(0, 1).toUpperCase();
+  if (!logo || failed) {
+    return (
+      <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-white text-xs font-bold text-black">
+        {initial}
+      </span>
+    );
+  }
+  return (
+    <img
+      src={logo}
+      alt=""
+      className="h-9 w-9 shrink-0 rounded-lg bg-white object-contain p-1"
+      onError={() => setFailed(true)}
+    />
+  );
+}
+
 function SubscribeInner() {
   const { me, refresh } = useAuth();
   const router = useRouter();
@@ -81,6 +101,23 @@ function SubscribeInner() {
     };
   }, [invoice?.paymentId, invoice?.mock, refresh, router]);
 
+  const checkNow = async () => {
+    if (!invoice?.paymentId) return;
+    setError("");
+    try {
+      const status = await api<{ status: string }>(`/v1/payments/${invoice.paymentId}`);
+      if (status.status === "PAID") {
+        setMsg("Төлбөр амжилттай. Одоо үзэж болно.");
+        await refresh();
+        setTimeout(() => router.push("/"), 800);
+      } else {
+        setMsg("Төлбөр хараахан бүртгэгдээгүй байна. Банкны апп дээр төлөөд дахин шалгана уу.");
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Төлбөр шалгаж чадсангүй");
+    }
+  };
+
   const simulate = async () => {
     if (!invoice?.paymentId) return;
     await api(`/v1/payments/simulate/${invoice.paymentId}`, { method: "POST" });
@@ -135,15 +172,29 @@ function SubscribeInner() {
                 <a
                   key={bank.name + bank.link}
                   href={bank.link}
-                  className="rounded-xl bg-white/10 px-3 py-2 text-center text-sm"
+                  className="flex items-center gap-2.5 rounded-xl bg-white/10 px-3 py-2.5 text-left transition hover:bg-white/15"
                 >
-                  {bank.name}
+                  <BankLogo name={bank.description ?? bank.name} logo={bank.logo} />
+                  <span className="min-w-0 text-sm leading-tight">
+                    {bank.description ?? bank.name}
+                  </span>
                 </a>
               ))}
             </div>
           )}
           {!invoice.mock && (
-            <p className="mt-4 text-center text-xs text-muted">Төлбөр хийсний дараа автоматаар баталгаажна</p>
+            <>
+              <p className="mt-4 text-center text-xs text-muted">
+                Банкны аппаар QR уншуулж төлнө үү. Төлсний дараа энэ хуудас автоматаар баталгаажуулна.
+              </p>
+              <button
+                type="button"
+                onClick={() => void checkNow()}
+                className="mt-3 w-full rounded-xl bg-white/10 py-2 text-sm"
+              >
+                Төлбөр шалгах
+              </button>
+            </>
           )}
           {invoice.mock && (
             <button onClick={() => void simulate()} className="mt-4 w-full rounded-xl bg-white py-2 text-black">

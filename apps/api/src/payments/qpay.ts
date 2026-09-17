@@ -9,11 +9,51 @@ export type QpayInvoice = {
   urls?: { name: string; description?: string; logo?: string; link: string }[];
 };
 
-export type QpayPaymentCheck = {
-  count: number;
-  paid_amount: number;
-  rows?: unknown[];
+export type QpayPaymentRow = {
+  payment_id?: string;
+  payment_status?: string;
+  payment_amount?: string | number;
 };
+
+export type QpayPaymentCheck = {
+  count?: number;
+  paid_amount?: number;
+  rows?: QpayPaymentRow[];
+};
+
+export function isQpayInvoicePaid(check: QpayPaymentCheck, amountMnt: number): boolean {
+  const rows = check.rows ?? [];
+  const count = Number(check.count ?? rows.length);
+  if (count <= 0 && rows.length === 0) return false;
+
+  const paidRows = rows.filter((row) => {
+    const status = String(row.payment_status ?? "").toUpperCase();
+    return !status || status === "PAID" || status === "SUCCESS";
+  });
+  if (rows.length > 0 && paidRows.length === 0) return false;
+
+  const paidAmount =
+    check.paid_amount != null && Number(check.paid_amount) > 0
+      ? Number(check.paid_amount)
+      : paidRows.reduce((sum, row) => sum + Number(row.payment_amount ?? 0), 0);
+
+  if (Number.isFinite(paidAmount) && paidAmount > 0) return paidAmount + 0.001 >= amountMnt;
+  return count > 0 || paidRows.length > 0;
+}
+
+function trimEnv(value: string | undefined) {
+  return value?.trim() ?? "";
+}
+
+function isPublicHttpUrl(value: string) {
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "https:" && url.protocol !== "http:") return false;
+    return url.hostname !== "localhost" && url.hostname !== "127.0.0.1";
+  } catch {
+    return false;
+  }
+}
 
 type TokenCache = {
   access: string;
@@ -33,26 +73,32 @@ export class QpayClient {
 
   username() {
     return (
-      this.config.get<string>("QPAY_CLIENT_ID") ||
-      this.config.get<string>("QPAY_USERNAME") ||
-      ""
+      trimEnv(this.config.get<string>("QPAY_CLIENT_ID")) ||
+      trimEnv(this.config.get<string>("QPAY_USERNAME"))
     );
   }
 
   password() {
     return (
-      this.config.get<string>("QPAY_CLIENT_SECRET") ||
-      this.config.get<string>("QPAY_PASSWORD") ||
-      ""
+      trimEnv(this.config.get<string>("QPAY_CLIENT_SECRET")) ||
+      trimEnv(this.config.get<string>("QPAY_PASSWORD"))
     );
   }
 
   invoiceCode() {
-    return this.config.get<string>("QPAY_INVOICE_CODE") ?? "";
+    return trimEnv(this.config.get<string>("QPAY_INVOICE_CODE"));
   }
 
   callbackUrl() {
-    return this.config.get<string>("QPAY_CALLBACK_URL") ?? "";
+    const explicit = trimEnv(this.config.get<string>("QPAY_CALLBACK_URL"));
+    const appUrl = trimEnv(this.config.get<string>("APP_URL")).replace(/\/+$/, "");
+    const railway = trimEnv(this.config.get<string>("RAILWAY_PUBLIC_DOMAIN"));
+    const fromApp = appUrl ? `${appUrl}/v1/webhooks/qpay` : "";
+    const fromRailway = railway ? `https://${railway.replace(/^https?:\/\//, "")}/v1/webhooks/qpay` : "";
+    if (isPublicHttpUrl(explicit)) return explicit;
+    if (isPublicHttpUrl(fromApp)) return fromApp;
+    if (isPublicHttpUrl(fromRailway)) return fromRailway;
+    return explicit || fromApp;
   }
 
   baseUrl() {
@@ -70,9 +116,8 @@ export class QpayClient {
     callbackUrl?: string;
   }): Promise<QpayInvoice> {
     const callback = input.callbackUrl || this.callbackUrl();
-    const separator = callback.includes("?") ? "&" : "?";
     const callbackUrl = callback
-      ? `${callback}${separator}invoice_id=${encodeURIComponent(input.senderInvoiceNo)}`
+      ? `${callback}${callback.includes("?") ? "&" : "?"}payment_id=${encodeURIComponent(input.senderInvoiceNo)}`
       : "";
 
     return this.request<QpayInvoice>("/invoice", {
@@ -81,7 +126,7 @@ export class QpayClient {
         invoice_code: this.invoiceCode(),
         sender_invoice_no: input.senderInvoiceNo,
         invoice_receiver_code: "terminal",
-        invoice_description: input.description,
+        invoice_description: input.description.slice(0, 255),
         amount: input.amount,
         callback_url: callbackUrl,
       }),
@@ -143,6 +188,7 @@ export class QpayClient {
         Authorization: `Basic ${Buffer.from(`${this.username()}:${this.password()}`).toString("base64")}`,
         "Content-Type": "application/json",
       },
+      body: "{}",
     });
     if (!res.ok) {
       throw new Error(`QPay auth failed ${res.status}: ${await res.text()}`);

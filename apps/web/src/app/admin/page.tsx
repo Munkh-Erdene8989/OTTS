@@ -1,113 +1,128 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
-import { useAuth } from "@/lib/auth";
-import { useRouter } from "next/navigation";
+import {
+  ACCESS_LABEL,
+  formatDate,
+  MUX_LABEL,
+  muxTone,
+  type AdminTitle,
+  type AdminUser,
+  type AdminVideo,
+} from "@/lib/admin";
+import { Badge } from "@/components/admin/ui";
 
-type AdminTitle = {
-  id: string;
-  title: string;
-  accessType: string;
-  isPublished: boolean;
-  videos: { id: string; kind: string; muxStatus: string }[];
-};
-
-export default function AdminPage() {
-  const { me, loading } = useAuth();
-  const router = useRouter();
-  const [titles, setTitles] = useState<AdminTitle[]>([]);
-  const [form, setForm] = useState({
-    title: "",
-    synopsis: "",
-    year: 2024,
-    posterUrl: "https://images.unsplash.com/photo-1485846234645-a62644f84728?auto=format&fit=crop&w=800&q=80",
-    heroUrl: "https://images.unsplash.com/photo-1485846234645-a62644f84728?auto=format&fit=crop&w=1600&q=80",
-    accessType: "SUBSCRIPTION",
-  });
+export default function AdminOverviewPage() {
+  const [titles, setTitles] = useState<AdminTitle[] | null>(null);
+  const [videos, setVideos] = useState<AdminVideo[]>([]);
+  const [users, setUsers] = useState<AdminUser[]>([]);
 
   useEffect(() => {
-    if (loading) return;
-    if (me?.role !== "ADMIN") {
-      router.push("/");
-      return;
-    }
-    void load();
-  }, [me, loading, router]);
-
-  const load = () => api<AdminTitle[]>("/v1/admin/titles").then(setTitles);
-
-  const create = async () => {
-    const title = await api<AdminTitle>("/v1/admin/titles", {
-      method: "POST",
-      body: JSON.stringify({ ...form, year: Number(form.year) }),
+    void Promise.all([
+      api<AdminTitle[]>("/v1/admin/titles"),
+      api<AdminVideo[]>("/v1/admin/videos"),
+      api<AdminUser[]>("/v1/admin/users"),
+    ]).then(([t, v, u]) => {
+      setTitles(t);
+      setVideos(v);
+      setUsers(u);
     });
-    await api("/v1/admin/videos", {
-      method: "POST",
-      body: JSON.stringify({ titleId: title.id, kind: "FEATURE" }),
-    });
-    await load();
-  };
+  }, []);
 
-  const upload = async (videoId: string) => {
-    const res = await api<{ url: string; mock?: boolean }>(`/v1/admin/videos/${videoId}/upload`, {
-      method: "POST",
-    });
-    if (res.mock) {
-      await api(`/v1/admin/videos/${videoId}/mock-upload`, { method: "POST" });
-    }
-    await load();
-  };
+  if (!titles) return <p className="text-sm text-muted">Уншиж байна…</p>;
+
+  const published = titles.filter((t) => t.isPublished).length;
+  const ready = videos.filter((v) => v.muxStatus === "READY").length;
+  const waiting = videos.filter((v) => v.muxStatus !== "READY").length;
+  const premium = users.filter((u) => u.subscriptions.some((s) => s.status === "ACTIVE")).length;
+
+  const stats = [
+    { label: "Контент", value: titles.length, hint: `${published} нийтлэгдсэн` },
+    { label: "Видео", value: videos.length, hint: `${ready} бэлэн · ${waiting} хүлээгдэж` },
+    { label: "Хэрэглэгч", value: users.length, hint: `${premium} Premium` },
+    { label: "Админ", value: users.filter((u) => u.role === "ADMIN").length, hint: "хандалттай" },
+  ];
 
   return (
-    <main className="space-y-6 px-4 pb-16 pt-4">
-      <h1 className="text-2xl font-bold">Админ</h1>
-      <section className="space-y-2 rounded-2xl bg-elevated p-4">
-        <input
-          className="w-full rounded-xl bg-black/30 px-3 py-2"
-          placeholder="Гарчиг"
-          value={form.title}
-          onChange={(e) => setForm({ ...form, title: e.target.value })}
-        />
-        <textarea
-          className="w-full rounded-xl bg-black/30 px-3 py-2"
-          placeholder="Тайлбар"
-          value={form.synopsis}
-          onChange={(e) => setForm({ ...form, synopsis: e.target.value })}
-        />
-        <select
-          className="w-full rounded-xl bg-black/30 px-3 py-2"
-          value={form.accessType}
-          onChange={(e) => setForm({ ...form, accessType: e.target.value })}
+    <div className="space-y-8">
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <p className="text-sm text-muted">negun контент, хэрэглэгч, Mux төлөв</p>
+        </div>
+        <Link
+          href="/admin/titles/new"
+          className="rounded-xl bg-white px-4 py-2.5 text-sm font-semibold text-black"
         >
-          <option>SUBSCRIPTION</option>
-          <option>PPV</option>
-          <option>FREE</option>
-        </select>
-        <button onClick={() => void create()} className="w-full rounded-xl bg-white py-2 text-black">
-          Title + video үүсгэх
-        </button>
-      </section>
-      <section className="space-y-3">
-        {titles.map((t) => (
-          <article key={t.id} className="rounded-2xl bg-elevated p-4 text-sm">
-            <p className="font-semibold">{t.title}</p>
-            <p className="text-muted">
-              {t.accessType} · {t.isPublished ? "нийтлэгдсэн" : "ноорог"}
-            </p>
-            {t.videos.map((v) => (
-              <div key={v.id} className="mt-2 flex items-center justify-between">
-                <span>
-                  {v.kind} · {v.muxStatus}
-                </span>
-                <button onClick={() => void upload(v.id)} className="rounded-lg bg-accent px-3 py-1">
-                  Mux upload
-                </button>
-              </div>
-            ))}
+          Шинэ title
+        </Link>
+      </div>
+
+      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        {stats.map((s) => (
+          <article key={s.label} className="rounded-2xl border border-white/6 bg-elevated p-4">
+            <p className="text-xs text-muted">{s.label}</p>
+            <p className="mt-2 text-3xl font-bold">{s.value}</p>
+            <p className="mt-1 text-xs text-muted">{s.hint}</p>
           </article>
         ))}
       </section>
-    </main>
+
+      <section className="grid gap-6 lg:grid-cols-2">
+        <div>
+          <div className="mb-3 flex items-center justify-between">
+            <h2 className="font-semibold">Сүүлийн контент</h2>
+            <Link href="/admin/titles" className="text-xs text-accent">
+              Бүгд
+            </Link>
+          </div>
+          <div className="space-y-2">
+            {titles.slice(0, 6).map((t) => (
+              <Link
+                key={t.id}
+                href={`/admin/titles/${t.id}`}
+                className="flex items-center gap-3 rounded-2xl bg-elevated p-3 hover:bg-white/5"
+              >
+                <img src={t.posterUrl} alt="" className="h-14 w-10 rounded-lg object-cover" />
+                <div className="min-w-0 flex-1">
+                  <p className="truncate font-medium">{t.title}</p>
+                  <p className="text-xs text-muted">
+                    {ACCESS_LABEL[t.accessType]} · {t.videos.length} видео
+                  </p>
+                </div>
+                <Badge tone={t.isPublished ? "green" : "amber"}>
+                  {t.isPublished ? "Нийтлэгдсэн" : "Ноорог"}
+                </Badge>
+              </Link>
+            ))}
+          </div>
+        </div>
+
+        <div>
+          <div className="mb-3 flex items-center justify-between">
+            <h2 className="font-semibold">Видео төлөв</h2>
+            <Link href="/admin/videos" className="text-xs text-accent">
+              Бүгд
+            </Link>
+          </div>
+          <div className="space-y-2">
+            {videos.slice(0, 6).map((v) => (
+              <div key={v.id} className="flex items-center justify-between rounded-2xl bg-elevated p-3">
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-medium">{v.title?.title ?? v.titleId}</p>
+                  <p className="text-xs text-muted">
+                    {v.kind} · {formatDate(v.createdAt)}
+                  </p>
+                </div>
+                <span className={`rounded-full px-2.5 py-0.5 text-[11px] ${muxTone(v.muxStatus)}`}>
+                  {MUX_LABEL[v.muxStatus]}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+    </div>
   );
 }

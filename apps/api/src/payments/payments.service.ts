@@ -1,7 +1,7 @@
 import { BadRequestException, Injectable, Logger, NotFoundException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { PrismaService } from "../prisma/prisma.service";
-import { QpayClient } from "./qpay";
+import { isQpayInvoicePaid, QpayClient } from "./qpay";
 
 const PREMIUM_MONTHLY_PRICE_MNT = 12990;
 const PREMIUM_PLAN_CODE = "premium_monthly";
@@ -16,6 +16,7 @@ export class PaymentsService {
     private readonly config: ConfigService,
   ) {
     this.qpay = new QpayClient(config);
+    this.logger.log(this.qpay.configured() ? "QPay: live merchant v2" : "QPay: mock (credentials missing)");
   }
 
   private price() {
@@ -145,16 +146,20 @@ export class PaymentsService {
 
   async handleCallback(body: Record<string, unknown>) {
     const invoiceId = String(
-      body.invoice_id ?? body.sender_invoice_no ?? body.payment_id ?? body.qpay_payment_id ?? "",
+      body.invoice_id ?? body.sender_invoice_no ?? body.qpay_payment_id ?? "",
     );
-    if (!invoiceId) {
+    const paymentId = String(body.payment_id ?? "");
+    if (!invoiceId && !paymentId) {
       this.logger.warn("QPay callback missing invoice id");
       return { ok: true, ignored: true };
     }
 
     const payment = await this.prisma.payment.findFirst({
       where: {
-        OR: [{ qpayInvoiceId: invoiceId }, { id: invoiceId }],
+        OR: [
+          ...(invoiceId ? [{ qpayInvoiceId: invoiceId }, { id: invoiceId }] : []),
+          ...(paymentId ? [{ id: paymentId }] : []),
+        ],
       },
     });
     if (!payment) {
@@ -200,8 +205,9 @@ export class PaymentsService {
         urls: invoice.urls,
       };
     } catch (err) {
-      this.logger.error(err);
-      throw new BadRequestException("QPay нэхэмжлэх үүсгэж чадсангүй");
+      const detail = err instanceof Error ? err.message : String(err);
+      this.logger.error(`QPay invoice create failed: ${detail}`);
+      throw new BadRequestException(qpayClientError(detail));
     }
   }
 
@@ -213,14 +219,19 @@ export class PaymentsService {
   ) {
     try {
       const check = await this.qpay.checkPayment(invoiceId);
-      const paid =
-        Number(check.count ?? 0) > 0 &&
-        (check.paid_amount == null || Number(check.paid_amount) >= amountMnt);
-      if (!paid) return null;
+      if (!isQpayInvoicePaid(check, amountMnt)) return null;
       return this.fulfill(paymentId, raw ?? check);
     } catch (err) {
       this.logger.error(`QPay payment check failed for ${invoiceId}: ${String(err)}`);
       return null;
     }
   }
+}
+
+function qpayClientError(detail: string) {
+  if (/auth failed/i.test(detail)) return "QPay нэвтрэлт амжилтгүй. Merchant нэр/нууц үгээ шалгана уу.";
+  if (/INVOICE_CODE/i.test(detail) || /invoice_code/i.test(detail)) {
+    return "QPay invoice code буруу байна. Merchant панел дээрх кодыг шалгана уу.";
+  }
+  return "QPay нэхэмжлэх үүсгэж чадсангүй";
 }

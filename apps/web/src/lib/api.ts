@@ -23,7 +23,8 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   const text = await res.text();
   const data = text ? JSON.parse(text) : null;
   if (!res.ok) {
-    throw new ApiError(res.status, data, data?.message ?? res.statusText);
+  const message = Array.isArray(data?.message) ? data.message.join(" ") : (data?.message ?? res.statusText);
+    throw new ApiError(res.status, data, String(message));
   }
   return data as T;
 }

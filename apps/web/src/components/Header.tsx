@@ -6,7 +6,8 @@ import { usePathname, useRouter } from "next/navigation";
 export function Header() {
   const router = useRouter();
   const pathname = usePathname();
-  const hide = pathname.startsWith("/watch") || pathname.startsWith("/login");
+  const hide =
+    pathname.startsWith("/watch") || pathname.startsWith("/login") || pathname.startsWith("/admin");
   if (hide) return null;
 
   return (
